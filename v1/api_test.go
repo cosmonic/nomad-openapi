@@ -3,6 +3,7 @@ package v1
 import (
 	"fmt"
 	"os"
+	"path"
 	"testing"
 	"time"
 
@@ -84,4 +85,69 @@ func TestTLS(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, meta)
 	require.NotNil(t, result)
+}
+
+func TestTLSEnabled(t *testing.T) {
+	enableTLS := func(c *agent.Config) {
+		tC := c.TLSConfig
+		tC.VerifyHTTPSClient = true
+		tC.EnableHTTP = true
+		tC.CAFile = mTLSFixturePath("server", "cafile")
+		tC.CertFile = mTLSFixturePath("server", "certfile")
+		tC.KeyFile = mTLSFixturePath("server", "keyfile")
+	}
+	httpTest(t, enableTLS, func(s *agent.TestAgent) {
+		t.Run("client args", func(t *testing.T) {
+			client, err := NewClient(
+				WithTLSCerts(
+					mTLSFixturePath("client", "cafile"),
+					mTLSFixturePath("client", "certfile"),
+					mTLSFixturePath("client", "keyfile"),
+				),
+				WithAddress(s.HTTPAddr()),
+			)
+
+			require.NoError(t, err)
+
+			q := &QueryOpts{
+				Region:    globalRegion,
+				Namespace: defaultNamespace,
+			}
+			result, err := client.Status().Leader(q.Ctx())
+			t.Logf("result: %q", *result)
+			require.NoError(t, err)
+			require.NotNil(t, result)
+		})
+		t.Run("env", func(t *testing.T) {
+			t.Setenv("NOMAD_CACERT", mTLSFixturePath("client", "cafile"))
+			t.Setenv("NOMAD_CLIENT_CERT", mTLSFixturePath("client", "certfile"))
+			t.Setenv("NOMAD_CLIENT_KEY", mTLSFixturePath("client", "keyfile"))
+			t.Setenv("NOMAD_ADDR", s.HTTPAddr())
+			client, err := NewClient()
+			require.NoError(t, err)
+
+			q := &QueryOpts{
+				Region:    globalRegion,
+				Namespace: defaultNamespace,
+			}
+			result, err := client.Status().Leader(q.Ctx())
+			require.NoError(t, err)
+			t.Logf("result: %q", *result)
+			require.NotNil(t, result)
+		})
+	})
+}
+
+func mTLSFixturePath(nodeType, pemType string) string {
+	var filename string
+	switch pemType {
+	case "cafile":
+		filename = "nomad-agent-ca.pem"
+	case "certfile":
+		filename = fmt.Sprintf("global-%s-nomad-0.pem", nodeType)
+	case "keyfile":
+		filename = fmt.Sprintf("global-%s-nomad-0-key.pem", nodeType)
+	}
+
+	return path.Join("../test_fixtures/mtls", filename)
 }
